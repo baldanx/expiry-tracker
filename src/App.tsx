@@ -31,9 +31,115 @@ import {
   LayoutGrid,
   AlertCircle
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, Reorder, useDragControls } from 'motion/react';
 import { db, auth } from './lib/firebase';
 import { Product, Batch } from './types';
+
+interface ReorderItemProps {
+  p: Product;
+  maxDaysPossible: number;
+  slots: Record<number, number>;
+  focusedProductId: string | null;
+  setFocusedProductId: (id: string | null) => void;
+  setEditingProduct: (p: Product | null) => void;
+  setIsProductModalOpen: (open: boolean) => void;
+  toggleArchive: (p: Product) => void;
+  setProductToDelete: (p: Product | null) => void;
+  setIsDeleteChoiceOpen: (open: boolean) => void;
+  setActiveSlot: (slot: any) => void;
+  setIsSlotModalOpen: (open: boolean) => void;
+}
+
+// Reorder Item Component for better performance and drag handle control
+const ReorderItemComponent: React.FC<ReorderItemProps> = ({ 
+  p, 
+  maxDaysPossible, 
+  slots, 
+  focusedProductId, 
+  setFocusedProductId, 
+  setEditingProduct, 
+  setIsProductModalOpen, 
+  toggleArchive, 
+  setProductToDelete, 
+  setIsDeleteChoiceOpen,
+  setActiveSlot,
+  setIsSlotModalOpen
+}) => {
+  const dragControls = useDragControls();
+
+  return (
+    <Reorder.Item 
+      value={p}
+      dragControls={dragControls}
+      dragListener={false}
+      className="grid border-b border-slate-200/60 bg-white"
+      style={{ gridTemplateColumns: `180px repeat(${maxDaysPossible}, 40px)` }}
+      onClick={() => setFocusedProductId(focusedProductId === p.id ? null : p.id)}
+    >
+      <div className={`sticky left-0 z-30 grid-cell relative px-2 group shadow-sm transition-colors ${focusedProductId === p.id ? 'bg-indigo-50' : 'bg-white'}`}>
+        <div className="flex items-center w-full gap-2">
+          <GripVertical 
+            size={18} 
+            className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-indigo-600 transition-colors"
+            onPointerDown={(e) => dragControls.start(e)}
+          />
+          <span className={`font-semibold text-slate-700 text-[13px] flex-1 text-center truncate italic leading-tight ${focusedProductId === p.id ? 'text-indigo-600' : ''}`}>
+            {p.name}
+          </span>
+        </div>
+        
+        {/* Icons Overlay (Edit/Archive/Delete) */}
+        <div className={`absolute inset-0 flex items-center justify-center gap-2 opacity-0 transition-opacity bg-white/95 backdrop-blur-sm px-1 ${focusedProductId === p.id ? 'opacity-100' : 'pointer-events-none'}`}>
+          <button onClick={(e) => { e.stopPropagation(); setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1.5 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center transition-colors">
+            <Edit2 size={16} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); toggleArchive(p); }} className="p-1.5 rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100 flex items-center justify-center transition-colors">
+                            {p.isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); setProductToDelete(p); setIsDeleteChoiceOpen(true); }} className="p-1.5 rounded-md bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center transition-colors">
+            <Trash2 size={16} />
+          </button>
+        </div>
+      </div>
+
+      {Array.from({ length: maxDaysPossible }).map((_, day) => {
+        const qty = slots[day] || 0;
+        const redStart = p.maxDays - p.redDays;
+        const yellowStart = redStart - p.yellowDays;
+        const isRed = day >= redStart;
+        const isYellow = !isRed && day >= yellowStart;
+
+        return (
+          <div 
+            key={day} 
+            className={`grid-cell relative group ${isRed ? 'bg-expired' : isYellow ? 'bg-warning' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveSlot({ productId: p.id, daysPassed: day, quantity: qty }); 
+              setIsSlotModalOpen(true); 
+            }}
+          >
+            {qty > 0 ? (
+              <div 
+                className={`status-dot cursor-pointer ${
+                  isRed 
+                    ? 'bg-red-500 shadow-red-200' 
+                    : isYellow 
+                      ? 'bg-amber-400 shadow-amber-200' 
+                      : 'bg-emerald-500 shadow-emerald-200'
+                }`}
+              >
+                {qty}
+              </div>
+            ) : (
+              <div className="w-2 h-2 rounded-full bg-slate-200 opacity-0 group-hover:opacity-100 transition-opacity" />
+            )}
+          </div>
+        );
+      })}
+    </Reorder.Item>
+  );
+};
 
 export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -43,6 +149,8 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [currentCategory, setCurrentCategory] = useState<'mignon' | 'monoporzione'>('mignon');
   const [showArchived, setShowArchived] = useState(false);
+
+  const [focusedProductId, setFocusedProductId] = useState<string | null>(null);
 
   const filteredProducts = useMemo(() => {
     return products
@@ -57,6 +165,21 @@ export default function App() {
         return a.name.localeCompare(b.name);
       });
   }, [products, currentCategory, showArchived]);
+
+  // Handle Drag Reorder
+  const handleReorder = async (newOrder: Product[]) => {
+    try {
+      const batch = writeBatch(db);
+      newOrder.forEach((p, index) => {
+        if (p.sortOrder !== index + 1) {
+          batch.update(doc(db, 'shared_products', p.id), { sortOrder: index + 1 });
+        }
+      });
+      await batch.commit();
+    } catch (err) {
+      console.error("Reorder save error:", err);
+    }
+  };
 
   // Modals state
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -75,8 +198,8 @@ export default function App() {
         setUser(u);
       } else {
         signInAnonymously(auth).catch(err => {
-          console.error("Auth error:", err);
-          setError("Errore di autenticazione");
+          console.warn("Auth error (non-fatal):", err);
+          // Don't show blocking error for auth, just let it fail gracefully
         });
       }
     });
@@ -85,8 +208,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
-
+    // If not authenticated yet, we can still show the UI, 
+    // but Firestore might not sync yet.
     const qProducts = collection(db, 'shared_products');
     const qBatches = collection(db, 'shared_batches');
 
@@ -95,11 +218,16 @@ export default function App() {
       setLoading(false);
     }, (err) => {
       console.error("Products sync error:", err);
-      setError("Errore sincronizzazione prodotti");
+      // Only set error if it's truly a breaking state
+      if (err.message.includes('permission-denied')) {
+        console.warn("Permission denied - check rules or auth");
+      }
     });
 
     const unsubBatches = onSnapshot(qBatches, (snapshot) => {
       setBatches(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Batch)));
+    }, (err) => {
+      console.error("Batches sync error:", err);
     });
 
     return () => {
@@ -338,6 +466,31 @@ export default function App() {
     reader.readAsText(file);
   };
 
+  const seedMignonData = async () => {
+    const initialMignons = [
+      { name: 'Cannolo', category: 'mignon', maxDays: 3, redDays: 1, yellowDays: 1, sortOrder: 1, isArchived: false },
+      { name: 'Bignè Crema', category: 'mignon', maxDays: 3, redDays: 1, yellowDays: 1, sortOrder: 2, isArchived: false },
+      { name: 'Tartelletta Frutta', category: 'mignon', maxDays: 2, redDays: 1, yellowDays: 0, sortOrder: 3, isArchived: false },
+      { name: 'Meringa', category: 'mignon', maxDays: 7, redDays: 2, yellowDays: 2, sortOrder: 4, isArchived: false },
+      { name: 'Cestina Cioccolato', category: 'mignon', maxDays: 5, redDays: 1, yellowDays: 1, sortOrder: 5, isArchived: false },
+    ];
+    
+    try {
+      setLoading(true);
+      const batchAction = writeBatch(db);
+      initialMignons.forEach(p => {
+        const ref = doc(collection(db, 'shared_products'));
+        batchAction.set(ref, { ...p, createdAt: serverTimestamp() });
+      });
+      await batchAction.commit();
+    } catch (err) {
+      console.error("Seed error:", err);
+      setError("Errore durante il caricamento dei dati iniziali");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center">
@@ -362,9 +515,9 @@ export default function App() {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-screen max-h-screen flex flex-col overflow-hidden bg-slate-100">
       {/* Glass Header */}
-      <header className="glass-header z-40 relative shadow-sm">
+      <header className="glass-header z-40 relative shadow-sm shrink-0">
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div className="bg-gradient-to-br from-indigo-500 to-violet-600 text-white p-2.5 rounded-xl shadow-lg shadow-indigo-200">
@@ -423,136 +576,124 @@ export default function App() {
       </header>
 
       {/* Main Grid Container */}
-      <main className="flex-1 overflow-hidden glass-panel m-2 sm:m-4 rounded-2xl">
-        <div 
-          className="w-full h-full overflow-auto relative" 
-          style={{ 
-            display: filteredProducts.length > 0 ? 'grid' : 'flex' ,
-            gridTemplateColumns: filteredProducts.length > 0 ? `minmax(140px, 180px) repeat(${maxDaysPossible}, 40px)` : 'none'
-          }}
-        >
+      <main id="main-content" className="flex-1 min-h-0 glass-panel m-2 sm:m-4 rounded-2xl overflow-hidden shadow-2xl shadow-indigo-100/50">
+        <div id="scroll-container" className="block w-full h-full overflow-auto relative scrolling-touch overscroll-contain">
           {filteredProducts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center w-full h-full text-slate-400 p-8">
-              <div className="bg-white/50 p-6 rounded-full mb-4">
-                {showArchived ? <Archive size={48} className="text-slate-300" /> : <Calendar size={48} className="text-indigo-300" />}
+            <div id="empty-state" className="flex flex-col items-center justify-center min-w-full min-h-full text-slate-400 p-8 space-y-4">
+              <div className="bg-white/80 p-8 rounded-full shadow-inner border border-slate-100">
+                {showArchived ? <Archive size={64} className="text-slate-300" /> : <Calendar size={64} className="text-indigo-400/60" />}
               </div>
-              <p className="text-lg font-medium text-slate-600">{showArchived ? 'Nessun prodotto archiviato' : 'Nessun prodotto attivo'}</p>
-              <p className="text-sm text-slate-500 mt-1">{showArchived ? 'Torna agli attivi' : 'Premi "Nuova Voce" per iniziare'}</p>
+              <div className="text-center">
+                <p className="text-xl font-bold text-slate-700">{showArchived ? 'Nessun prodotto archiviato' : 'Nessun prodotto attivo'}</p>
+                <p className="text-sm text-slate-500 mt-2">{showArchived ? 'Tutti i prodotti sono correntemente in uso' : 'Il tuo database sembra vuoto'}</p>
+              </div>
+              {!showArchived && currentCategory === 'mignon' && (
+                <button 
+                  onClick={seedMignonData}
+                  className="mt-4 px-6 py-3 bg-white text-indigo-600 font-bold rounded-xl border-2 border-indigo-50 shadow-sm hover:bg-indigo-50 transition-all flex items-center gap-2"
+                >
+                  <Download size={18} />
+                  Carica Mignon Predefiniti
+                </button>
+              )}
+              <button 
+                onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }}
+                className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 hover:scale-105 transition-transform"
+              >
+                Aggiungi Nuova Voce
+              </button>
             </div>
           ) : (
-            <>
+            <div id="grid-layout" className="min-w-fit min-h-full inline-block pb-20" style={{ width: `calc(180px + ${maxDaysPossible} * 40px)` }}>
               {/* Header Row */}
-              <div className="sticky-corner font-bold text-slate-400 text-[10px] tracking-wider uppercase border-r">PRODOTTO</div>
-              {Array.from({ length: maxDaysPossible }).map((_, i) => {
-                const date = new Date();
-                date.setDate(date.getDate() - i);
-                return (
-                  <div key={i} className="sticky-header-row grid-cell flex-col border-b border-slate-200">
-                    <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">{i} g</span>
-                    <span className="text-xs font-semibold text-slate-600">{date.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })}</span>
-                  </div>
-                );
-              })}
+              <div 
+                id="grid-header"
+                className="grid sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80"
+                style={{ gridTemplateColumns: `180px repeat(${maxDaysPossible}, 40px)` }}
+              >
+                <div className="sticky-corner font-bold text-slate-400 text-[10px] tracking-widest uppercase border-r bg-white/95 h-12 flex items-center justify-center">PRODOTTO</div>
+                {Array.from({ length: maxDaysPossible }).map((_, i) => {
+                  const date = new Date();
+                  date.setDate(date.getDate() - i);
+                  return (
+                    <div 
+                      key={i} 
+                      className="grid-cell flex-col border-b border-slate-200/40 bg-transparent h-12 hover:bg-indigo-50/50 transition-colors group cursor-pointer"
+                      onClick={() => deleteColumn(i)}
+                      title="Elimina colonna"
+                    >
+                      <span className="text-[9px] font-black text-indigo-500 uppercase tracking-tighter leading-none">{i}d</span>
+                      <span className="text-[11px] font-bold text-slate-600 leading-tight">{date.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })}</span>
+                    </div>
+                  );
+                })}
+              </div>
 
               {/* Product Rows */}
-              {filteredProducts.map((p, pIndex) => {
-                const pBatches = batches.filter(b => b.productId === p.id);
-                const slots: Record<number, number> = {};
-                pBatches.forEach(b => {
-                  const dp = getDaysPassed(b.entryDate);
-                  if (dp >= 0 && dp < maxDaysPossible) {
-                    slots[dp] = (slots[dp] || 0) + b.quantity;
-                  }
-                });
+              <Reorder.Group 
+                axis="y" 
+                values={filteredProducts} 
+                onReorder={handleReorder}
+                className="flex flex-col min-w-full"
+              >
+                {filteredProducts.map((p) => {
+                  const pBatches = batches.filter(b => b.productId === p.id);
+                  const slots: Record<number, number> = {};
+                  pBatches.forEach(b => {
+                    const dp = getDaysPassed(b.entryDate);
+                    if (dp >= 0 && dp < maxDaysPossible) {
+                      slots[dp] = (slots[dp] || 0) + b.quantity;
+                    }
+                  });
 
-                return (
-                  <div key={p.id} className="contents">
-                    <div className="sticky-col-product grid-cell relative px-2 group bg-white">
-                      <div className="flex items-center w-full gap-1">
-                        <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => moveProduct(p, 'up')} className="p-0.5 text-slate-400 hover:text-indigo-600" title="Sposta su">
-                            <ChevronUp size={14} />
-                          </button>
-                          <button onClick={() => moveProduct(p, 'down')} className="p-0.5 text-slate-400 hover:text-indigo-600" title="Sposta giù">
-                            <ChevronDown size={14} />
-                          </button>
-                        </div>
-                        <span className="font-semibold text-slate-700 text-[13px] flex-1 text-center truncate italic leading-tight">{p.name}</span>
-                      </div>
-                      <div className="absolute inset-0 flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white/95 backdrop-blur-sm px-1">
-                        <button onClick={() => { setActiveProductId(p.id); setIsBatchModalOpen(true); }} className="p-1 px-1.5 rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100 flex items-center justify-center transition-colors">
-                          <Plus size={16} />
-                        </button>
-                        <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 px-1.5 rounded-md bg-slate-50 text-slate-500 hover:bg-slate-100 flex items-center justify-center transition-colors">
-                          <Edit2 size={12} />
-                        </button>
-                        <button onClick={() => toggleArchive(p)} className="p-1 px-1.5 rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100 flex items-center justify-center transition-colors" title={p.isArchived ? "Ripristina" : "Archivia"}>
-                          {p.isArchived ? <ArchiveRestore size={12} /> : <Archive size={12} />}
-                        </button>
-                        <button onClick={() => { setProductToDelete(p); setIsDeleteChoiceOpen(true); }} className="p-1 px-1.5 rounded-md bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center transition-colors">
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {Array.from({ length: maxDaysPossible }).map((_, day) => {
-                      const qty = slots[day] || 0;
-                      const redStart = p.maxDays - p.redDays;
-                      const yellowStart = redStart - p.yellowDays;
-                      const isRed = day >= redStart;
-                      const isYellow = !isRed && day >= yellowStart;
-
-                      return (
-                        <div 
-                          key={day} 
-                          className={`grid-cell relative group ${isRed ? 'bg-expired' : isYellow ? 'bg-warning' : ''}`}
-                          onClick={qty === 0 ? () => { setActiveSlot({ productId: p.id, daysPassed: day, quantity: 0 }); setIsSlotModalOpen(true); } : undefined}
-                        >
-                          {qty > 0 ? (
-                            <div 
-                              className={`status-dot cursor-pointer ${
-                                isRed 
-                                  ? 'bg-red-500 hover:bg-red-600 shadow-red-200' 
-                                  : isYellow 
-                                    ? 'bg-amber-400 hover:bg-amber-500 shadow-amber-200' 
-                                    : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200'
-                              }`}
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                setActiveSlot({ productId: p.id, daysPassed: day, quantity: qty }); 
-                                setIsSlotModalOpen(true); 
-                              }}
-                            >
-                              {qty}
-                            </div>
-                          ) : (
-                            <div className="w-2 h-2 rounded-full bg-slate-200 opacity-0 group-hover:opacity-100 transition-opacity" />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
+                  return (
+                    <ReorderItemComponent
+                      key={p.id}
+                      p={p}
+                      maxDaysPossible={maxDaysPossible}
+                      slots={slots}
+                      focusedProductId={focusedProductId}
+                      setFocusedProductId={setFocusedProductId}
+                      setEditingProduct={setEditingProduct}
+                      setIsProductModalOpen={setIsProductModalOpen}
+                      toggleArchive={toggleArchive}
+                      setProductToDelete={setProductToDelete}
+                      setIsDeleteChoiceOpen={setIsDeleteChoiceOpen}
+                      setActiveSlot={setActiveSlot}
+                      setIsSlotModalOpen={setIsSlotModalOpen}
+                    />
+                  );
+                })}
+              </Reorder.Group>
 
               {/* Total Row */}
-              <div className="sticky-col-product grid-cell font-bold text-[10px] text-slate-700 tracking-wider justify-center bg-slate-50 border-t-2 border-slate-200 uppercase">TOTALE</div>
-              {colTotals.map((tot, i) => (
-                <div key={i} className={`grid-cell justify-center font-bold bg-slate-50 border-t-2 border-slate-200 ${tot > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
-                  {tot > 0 ? tot : '-'}
-                </div>
-              ))}
+              <div 
+                className="grid border-t-2 border-slate-200 bg-slate-50"
+                style={{ gridTemplateColumns: `180px repeat(${maxDaysPossible}, 40px)` }}
+              >
+                <div className="sticky left-0 z-10 grid-cell font-bold text-[10px] text-slate-700 tracking-wider justify-center bg-slate-50 uppercase border-r shadow-sm">TOTALE</div>
+                {colTotals.map((tot, i) => (
+                  <div key={i} className={`grid-cell justify-center font-bold ${tot > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
+                    {tot > 0 ? tot : '-'}
+                  </div>
+                ))}
+              </div>
 
               {/* Delete Column Row */}
-              <div className="sticky-col-product grid-cell bg-slate-50 font-bold text-[10px] text-red-500 uppercase tracking-wider justify-center">ELIMINA COLONNA</div>
-              {Array.from({ length: maxDaysPossible }).map((_, i) => (
-                <div key={i} className="grid-cell bg-slate-50 justify-center">
-                  <button onClick={() => deleteColumn(i)} className="w-6 h-6 rounded-md text-red-300 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-colors">
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              ))}
-            </>
+              <div 
+                className="grid border-t border-slate-200 bg-slate-50"
+                style={{ gridTemplateColumns: `180px repeat(${maxDaysPossible}, 40px)` }}
+              >
+                <div className="sticky left-0 z-10 grid-cell bg-slate-50 font-bold text-[10px] text-red-500 uppercase tracking-wider justify-center border-r shadow-sm">ELIMINA</div>
+                {Array.from({ length: maxDaysPossible }).map((_, i) => (
+                  <div key={i} className="grid-cell justify-center">
+                    <button onClick={() => deleteColumn(i)} className="w-6 h-6 rounded-md text-red-300 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-colors">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </main>
