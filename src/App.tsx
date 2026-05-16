@@ -73,14 +73,14 @@ const ReorderItemComponent: React.FC<ReorderItemProps> = ({
       dragControls={dragControls}
       dragListener={false}
       className="grid border-b border-slate-200/60 bg-white"
-      style={{ gridTemplateColumns: `180px repeat(${maxDaysPossible}, 40px)` }}
+      style={{ gridTemplateColumns: `var(--col-prod) repeat(${maxDaysPossible}, var(--col-day))` }}
       onClick={() => setFocusedProductId(focusedProductId === p.id ? null : p.id)}
     >
       <div className={`sticky left-0 z-30 grid-cell relative px-2 group shadow-sm transition-colors ${focusedProductId === p.id ? 'bg-indigo-50' : 'bg-white'}`}>
         <div className="flex items-center w-full gap-2">
           <GripVertical 
-            size={18} 
-            className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-indigo-600 transition-colors"
+            size={20} 
+            className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-indigo-600 transition-colors shrink-0"
             onPointerDown={(e) => dragControls.start(e)}
           />
           <span className={`font-semibold text-slate-700 text-[13px] flex-1 text-center truncate italic leading-tight ${focusedProductId === p.id ? 'text-indigo-600' : ''}`}>
@@ -168,11 +168,23 @@ export default function App() {
 
   // Handle Drag Reorder
   const handleReorder = async (newOrder: Product[]) => {
+    // Optimistic local update to avoid jumpiness
+    const updatedProducts = products.map(p => {
+      const reorderedItem = newOrder.find(ni => ni.id === p.id);
+      if (reorderedItem) {
+        const newIndex = newOrder.indexOf(reorderedItem);
+        return { ...p, sortOrder: newIndex + 1 };
+      }
+      return p;
+    });
+    setProducts(updatedProducts);
+
     try {
       const batch = writeBatch(db);
       newOrder.forEach((p, index) => {
-        if (p.sortOrder !== index + 1) {
-          batch.update(doc(db, 'shared_products', p.id), { sortOrder: index + 1 });
+        const newOrderValue = index + 1;
+        if (p.sortOrder !== newOrderValue) {
+          batch.update(doc(db, 'shared_products', p.id), { sortOrder: newOrderValue });
         }
       });
       await batch.commit();
@@ -518,58 +530,68 @@ export default function App() {
     <div className="h-screen max-h-screen flex flex-col overflow-hidden bg-slate-100">
       {/* Glass Header */}
       <header className="glass-header z-40 relative shadow-sm shrink-0">
-        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <div className="bg-gradient-to-br from-indigo-500 to-violet-600 text-white p-2.5 rounded-xl shadow-lg shadow-indigo-200">
-              <Calendar size={24} />
+        <div className="max-w-[1920px] mx-auto px-3 sm:px-6 py-2 sm:py-4 flex flex-col md:flex-row justify-between items-center gap-2 sm:gap-4">
+          <div className="flex items-center justify-between w-full md:w-auto">
+            <div className="flex items-center gap-3">
+              <div className="bg-gradient-to-br from-indigo-500 to-violet-600 text-white p-2 rounded-xl shadow-lg shadow-indigo-200">
+                <Calendar size={20} className="sm:w-6 sm:h-6" />
+              </div>
+              <div>
+                <h1 className="text-lg sm:text-xl font-bold text-slate-800 tracking-tight leading-none">Expiry Tracker</h1>
+                <p className="text-[10px] sm:text-xs font-medium text-indigo-500 uppercase tracking-wider mt-0.5">
+                  {new Date().toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'long' })}
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-800 tracking-tight">Expiry Tracker</h1>
-              <p className="text-xs font-medium text-indigo-500 uppercase tracking-wider mt-0.5">
-                {new Date().toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'long' })}
-              </p>
-            </div>
+            
+            {/* Quick Add for Mobile */}
+            <button 
+              onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }}
+              className="md:hidden p-2 bg-indigo-600 text-white rounded-lg shadow-md"
+            >
+              <Plus size={20} />
+            </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 w-full md:w-auto justify-between md:justify-end overflow-x-auto no-scrollbar py-1">
             {/* View Toggle */}
-            <div className="flex bg-slate-100 p-1 rounded-xl items-center gap-1 shadow-inner border border-slate-200">
+            <div className="flex bg-slate-100 p-1 rounded-xl items-center gap-1 shadow-inner border border-slate-200 shrink-0">
               <button 
                 onClick={() => setCurrentCategory('mignon')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${currentCategory === 'mignon' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`flex items-center gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${currentCategory === 'mignon' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
-                <Layers size={14} /> MIGNON
+                <Layers size={14} /> <span className="hidden xs:inline">MIGNON</span>
               </button>
               <button 
                 onClick={() => setCurrentCategory('monoporzione')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${currentCategory === 'monoporzione' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`flex items-center gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${currentCategory === 'monoporzione' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
-                <LayoutGrid size={14} /> MONO
+                <LayoutGrid size={14} /> <span className="hidden xs:inline">MONO</span>
               </button>
             </div>
 
-            <div className="flex items-center gap-1 bg-white/50 rounded-lg p-1 border border-white/60">
+            <div className="flex items-center gap-1 bg-white/50 rounded-lg p-1 border border-white/60 shrink-0">
               <button 
                 onClick={() => setShowArchived(!showArchived)} 
-                className={`p-2 rounded-md transition-all ${showArchived ? 'bg-indigo-100 text-indigo-600' : 'text-slate-500 hover:text-indigo-600 hover:bg-white'}`}
+                className={`p-1.5 sm:p-2 rounded-md transition-all ${showArchived ? 'bg-indigo-100 text-indigo-600' : 'text-slate-500 hover:text-indigo-600 hover:bg-white'}`}
                 title={showArchived ? "Mostra Attivi" : "Mostra Archiviati"}
               >
-                {showArchived ? <ArchiveRestore size={20} /> : <Archive size={20} />}
+                {showArchived ? <ArchiveRestore size={18} /> : <Archive size={18} />}
               </button>
-              <button onClick={handleExport} className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all" title="Esporta Backup">
-                <Download size={20} />
+              <button onClick={handleExport} className="p-1.5 sm:p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all" title="Esporta Backup">
+                <Download size={18} />
               </button>
-              <label className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all cursor-pointer" title="Importa Backup">
-                <Upload size={20} />
+              <label className="p-1.5 sm:p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all cursor-pointer" title="Importa Backup">
+                <Upload size={18} />
                 <input type="file" accept=".json" onChange={handleImport} className="hidden" />
               </label>
             </div>
             <button 
               onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }}
-              className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-lg shadow-md shadow-indigo-200 hover:shadow-lg hover:from-indigo-700 hover:to-violet-700 transition-all"
+              className="hidden md:flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-lg shadow-md shadow-indigo-200 hover:shadow-lg hover:from-indigo-700 hover:to-violet-700 transition-all shrink-0"
             >
               <Plus size={20} />
-              <span className="font-bold hidden sm:inline">Nuova Voce</span>
+              <span className="font-bold">Nuova Voce</span>
             </button>
           </div>
         </div>
@@ -604,12 +626,12 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <div id="grid-layout" className="min-w-fit min-h-full inline-block pb-20" style={{ width: `calc(180px + ${maxDaysPossible} * 40px)` }}>
+            <div id="grid-layout" className="min-w-fit min-h-full inline-block pb-20" style={{ width: `calc(var(--col-prod) + ${maxDaysPossible} * var(--col-day))` }}>
               {/* Header Row */}
               <div 
                 id="grid-header"
                 className="grid sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80"
-                style={{ gridTemplateColumns: `180px repeat(${maxDaysPossible}, 40px)` }}
+                style={{ gridTemplateColumns: `var(--col-prod) repeat(${maxDaysPossible}, var(--col-day))` }}
               >
                 <div className="sticky-corner font-bold text-slate-400 text-[10px] tracking-widest uppercase border-r bg-white/95 h-12 flex items-center justify-center">PRODOTTO</div>
                 {Array.from({ length: maxDaysPossible }).map((_, i) => {
@@ -669,7 +691,7 @@ export default function App() {
               {/* Total Row */}
               <div 
                 className="grid border-t-2 border-slate-200 bg-slate-50"
-                style={{ gridTemplateColumns: `180px repeat(${maxDaysPossible}, 40px)` }}
+                style={{ gridTemplateColumns: `var(--col-prod) repeat(${maxDaysPossible}, var(--col-day))` }}
               >
                 <div className="sticky left-0 z-10 grid-cell font-bold text-[10px] text-slate-700 tracking-wider justify-center bg-slate-50 uppercase border-r shadow-sm">TOTALE</div>
                 {colTotals.map((tot, i) => (
@@ -682,7 +704,7 @@ export default function App() {
               {/* Delete Column Row */}
               <div 
                 className="grid border-t border-slate-200 bg-slate-50"
-                style={{ gridTemplateColumns: `180px repeat(${maxDaysPossible}, 40px)` }}
+                style={{ gridTemplateColumns: `var(--col-prod) repeat(${maxDaysPossible}, var(--col-day))` }}
               >
                 <div className="sticky left-0 z-10 grid-cell bg-slate-50 font-bold text-[10px] text-red-500 uppercase tracking-wider justify-center border-r shadow-sm">ELIMINA</div>
                 {Array.from({ length: maxDaysPossible }).map((_, i) => (
