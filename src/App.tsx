@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   collection, 
   onSnapshot, 
@@ -48,6 +48,8 @@ interface ReorderItemProps {
   setIsDeleteChoiceOpen: (open: boolean) => void;
   setActiveSlot: (slot: any) => void;
   setIsSlotModalOpen: (open: boolean) => void;
+  setIsDragging: (dragging: boolean) => void;
+  saveOrder: () => void;
 }
 
 // Reorder Item Component for better performance and drag handle control
@@ -63,13 +65,18 @@ const ReorderItemComponent: React.FC<ReorderItemProps> = ({
   setProductToDelete, 
   setIsDeleteChoiceOpen,
   setActiveSlot,
-  setIsSlotModalOpen
+  setIsSlotModalOpen,
+  setIsDragging,
+  saveOrder
 }) => {
   const dragControls = useDragControls();
 
   return (
     <Reorder.Item 
       value={p}
+      id={p.id}
+      onDragStart={() => setIsDragging(true)}
+      onDragEnd={() => { setIsDragging(false); saveOrder(); }}
       dragControls={dragControls}
       dragListener={false}
       className="grid border-b border-slate-200/60 bg-white"
@@ -80,10 +87,13 @@ const ReorderItemComponent: React.FC<ReorderItemProps> = ({
         <div className="flex items-center w-full gap-2">
           <GripVertical 
             size={20} 
-            className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-indigo-600 transition-colors shrink-0"
-            onPointerDown={(e) => dragControls.start(e)}
+            className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-indigo-600 transition-colors shrink-0 touch-none"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              dragControls.start(e);
+            }}
           />
-          <span className={`font-semibold text-slate-700 text-[13px] flex-1 text-center truncate italic leading-tight ${focusedProductId === p.id ? 'text-indigo-600' : ''}`}>
+          <span className={`font-bold text-slate-700 text-[14px] flex-1 text-center truncate leading-tight ${focusedProductId === p.id ? 'text-indigo-600' : ''}`}>
             {p.name}
           </span>
         </div>
@@ -159,35 +169,44 @@ export default function App() {
         return category === currentCategory && (!!p.isArchived === showArchived);
       })
       .sort((a, b) => {
-        if ((a.sortOrder || 0) !== (b.sortOrder || 0)) {
-          return (a.sortOrder || 0) - (b.sortOrder || 0);
+        const orderA = a.sortOrder !== undefined ? a.sortOrder : Infinity;
+        const orderB = b.sortOrder !== undefined ? b.sortOrder : Infinity;
+        if (orderA !== orderB) {
+          return orderA - orderB;
         }
         return a.name.localeCompare(b.name);
       });
   }, [products, currentCategory, showArchived]);
 
-  // Handle Drag Reorder
-  const handleReorder = async (newOrder: Product[]) => {
-    // Optimistic local update to avoid jumpiness
-    const updatedProducts = products.map(p => {
-      const reorderedItem = newOrder.find(ni => ni.id === p.id);
-      if (reorderedItem) {
-        const newIndex = newOrder.indexOf(reorderedItem);
-        return { ...p, sortOrder: newIndex + 1 };
-      }
-      return p;
-    });
-    setProducts(updatedProducts);
+  const [displayProducts, setDisplayProducts] = useState<Product[]>([]);
+  const isDragging = useRef(false);
 
+  useEffect(() => {
+    if (!isDragging.current) {
+      setDisplayProducts(filteredProducts);
+    }
+  }, [filteredProducts]);
+
+  // Handle Drag Reorder
+  const handleReorder = (newOrder: Product[]) => {
+    // Immediate visual update for Framer Motion, without triggering a full recalculation of filteredProducts
+    setDisplayProducts(newOrder);
+  };
+
+  const saveOrder = async () => {
     try {
       const batch = writeBatch(db);
-      newOrder.forEach((p, index) => {
+      let hasChanges = false;
+      displayProducts.forEach((p, index) => {
         const newOrderValue = index + 1;
         if (p.sortOrder !== newOrderValue) {
           batch.update(doc(db, 'shared_products', p.id), { sortOrder: newOrderValue });
+          hasChanges = true;
         }
       });
-      await batch.commit();
+      if (hasChanges) {
+        await batch.commit();
+      }
     } catch (err) {
       console.error("Reorder save error:", err);
     }
@@ -220,8 +239,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // If not authenticated yet, we can still show the UI, 
-    // but Firestore might not sync yet.
+    if (!user) return;
+
     const qProducts = collection(db, 'shared_products');
     const qBatches = collection(db, 'shared_batches');
 
@@ -234,6 +253,7 @@ export default function App() {
       if (err.message.includes('permission-denied')) {
         console.warn("Permission denied - check rules or auth");
       }
+      setLoading(false);
     });
 
     const unsubBatches = onSnapshot(qBatches, (snapshot) => {
@@ -530,69 +550,74 @@ export default function App() {
     <div className="h-screen max-h-screen flex flex-col overflow-hidden bg-slate-100">
       {/* Glass Header */}
       <header className="glass-header z-40 relative shadow-sm shrink-0">
-        <div className="max-w-[1920px] mx-auto px-3 sm:px-6 py-2 sm:py-4 flex flex-col md:flex-row justify-between items-center gap-2 sm:gap-4">
-          <div className="flex items-center justify-between w-full md:w-auto">
+        <div className="max-w-[1920px] mx-auto px-4 py-2 sm:py-3 flex flex-col xs:flex-row justify-between items-center gap-2">
+          {/* Logo and Mobile Actions */}
+          <div className="flex items-center justify-between w-full xs:w-auto gap-4">
             <div className="flex items-center gap-3">
-              <div className="bg-gradient-to-br from-indigo-500 to-violet-600 text-white p-2 rounded-xl shadow-lg shadow-indigo-200">
-                <Calendar size={20} className="sm:w-6 sm:h-6" />
+              <div className="bg-gradient-to-br from-indigo-500 to-violet-600 text-white p-1.5 sm:p-2 rounded-xl shadow-lg shadow-indigo-200 shrink-0">
+                <Calendar size={18} className="sm:w-6 sm:h-6" />
               </div>
-              <div>
-                <h1 className="text-lg sm:text-xl font-bold text-slate-800 tracking-tight leading-none">Expiry Tracker</h1>
-                <p className="text-[10px] sm:text-xs font-medium text-indigo-500 uppercase tracking-wider mt-0.5">
+              <div className="min-w-0">
+                <h1 className="text-base sm:text-lg font-bold text-slate-800 tracking-tight leading-tight truncate">Expiry Tracker</h1>
+                <p className="text-[9px] sm:text-[10px] font-medium text-indigo-500 uppercase tracking-wider">
                   {new Date().toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'long' })}
                 </p>
               </div>
             </div>
             
-            {/* Quick Add for Mobile */}
+            {/* Quick Add for Mobile - Only on very small screens */}
             <button 
               onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }}
-              className="md:hidden p-2 bg-indigo-600 text-white rounded-lg shadow-md"
+              className="xs:hidden p-1.5 bg-indigo-600 text-white rounded-lg shadow-md shrink-0"
             >
-              <Plus size={20} />
+              <Plus size={18} />
             </button>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 w-full md:w-auto justify-between md:justify-end overflow-x-auto no-scrollbar py-1">
+          {/* Controls Bar */}
+          <div className="flex items-center gap-2 w-full xs:w-auto justify-between sm:justify-end">
             {/* View Toggle */}
-            <div className="flex bg-slate-100 p-1 rounded-xl items-center gap-1 shadow-inner border border-slate-200 shrink-0">
+            <div className="flex bg-slate-200/50 p-1 rounded-xl items-center gap-0.5 shadow-inner border border-white/50 shrink-0">
               <button 
                 onClick={() => setCurrentCategory('mignon')}
-                className={`flex items-center gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${currentCategory === 'mignon' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] sm:text-xs font-black transition-all ${currentCategory === 'mignon' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
-                <Layers size={14} /> <span className="hidden xs:inline">MIGNON</span>
+                <LayoutGrid size={12} /> <span>MIGNON</span>
               </button>
               <button 
                 onClick={() => setCurrentCategory('monoporzione')}
-                className={`flex items-center gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${currentCategory === 'monoporzione' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] sm:text-xs font-black transition-all ${currentCategory === 'monoporzione' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
-                <LayoutGrid size={14} /> <span className="hidden xs:inline">MONO</span>
+                <Layers size={12} /> <span>MONO</span>
               </button>
             </div>
 
-            <div className="flex items-center gap-1 bg-white/50 rounded-lg p-1 border border-white/60 shrink-0">
+            <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 bg-white/40 rounded-lg p-1 border border-white/60 shrink-0">
+                <button 
+                  onClick={() => setShowArchived(!showArchived)} 
+                  className={`p-1.5 rounded-md transition-all ${showArchived ? 'bg-indigo-100 text-indigo-600' : 'text-slate-500 hover:text-indigo-600 hover:bg-white'}`}
+                  title={showArchived ? "Mostra Attivi" : "Mostra Archiviati"}
+                >
+                  {showArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+                </button>
+                <button onClick={handleExport} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all" title="Esporta Backup">
+                  <Download size={16} />
+                </button>
+                <label className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all cursor-pointer" title="Importa Backup">
+                  <Upload size={16} />
+                  <input type="file" accept=".json" onChange={handleImport} className="hidden" />
+                </label>
+              </div>
+              
               <button 
-                onClick={() => setShowArchived(!showArchived)} 
-                className={`p-1.5 sm:p-2 rounded-md transition-all ${showArchived ? 'bg-indigo-100 text-indigo-600' : 'text-slate-500 hover:text-indigo-600 hover:bg-white'}`}
-                title={showArchived ? "Mostra Attivi" : "Mostra Archiviati"}
+                onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }}
+                className="hidden xs:flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-lg shadow-md shadow-indigo-100 hover:shadow-lg transition-all shrink-0"
               >
-                {showArchived ? <ArchiveRestore size={18} /> : <Archive size={18} />}
+                <Plus size={16} />
+                <span className="text-xs font-black uppercase tracking-wider">Nuova</span>
               </button>
-              <button onClick={handleExport} className="p-1.5 sm:p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all" title="Esporta Backup">
-                <Download size={18} />
-              </button>
-              <label className="p-1.5 sm:p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-all cursor-pointer" title="Importa Backup">
-                <Upload size={18} />
-                <input type="file" accept=".json" onChange={handleImport} className="hidden" />
-              </label>
             </div>
-            <button 
-              onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }}
-              className="hidden md:flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-lg shadow-md shadow-indigo-200 hover:shadow-lg hover:from-indigo-700 hover:to-violet-700 transition-all shrink-0"
-            >
-              <Plus size={20} />
-              <span className="font-bold">Nuova Voce</span>
-            </button>
           </div>
         </div>
       </header>
@@ -654,11 +679,11 @@ export default function App() {
               {/* Product Rows */}
               <Reorder.Group 
                 axis="y" 
-                values={filteredProducts} 
+                values={displayProducts} 
                 onReorder={handleReorder}
                 className="flex flex-col min-w-full"
               >
-                {filteredProducts.map((p) => {
+                {displayProducts.map((p) => {
                   const pBatches = batches.filter(b => b.productId === p.id);
                   const slots: Record<number, number> = {};
                   pBatches.forEach(b => {
@@ -683,6 +708,8 @@ export default function App() {
                       setIsDeleteChoiceOpen={setIsDeleteChoiceOpen}
                       setActiveSlot={setActiveSlot}
                       setIsSlotModalOpen={setIsSlotModalOpen}
+                      setIsDragging={(d) => { isDragging.current = d; }}
+                      saveOrder={saveOrder}
                     />
                   );
                 })}
