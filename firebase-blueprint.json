@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Defines a product type for expiry tracking",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "maxDays": { "type": "number" },
+        "yellowDays": { "type": "number" },
+        "redDays": { "type": "number" },
+        "isArchived": { "type": "boolean" },
+        "sortOrder": { "type": "number" },
+        "category": { "type": "string", "enum": ["mignon", "monoporzione"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "maxDays", "yellowDays", "redDays", "category"]
+    },
+    "Batch": {
+      "title": "Batch",
+      "description": "Defines a batch/stock entry for a product",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "entryDate": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "quantity", "entryDate"]
+    }
+  },
+  "firestore": {
+    "/shared_products": {
+      "schema": "Product",
+      "description": "Collection of shared products"
+    },
+    "/shared_batches": {
+      "schema": "Batch",
+      "description": "Collection of shared batches"
+    }
+  }
+}

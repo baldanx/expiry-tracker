@@ -1,0 +1,8 @@
+{
+  "name": "Expiry Tracker",
+  "description": "Un'applicazione per tracciare la scadenza dei prodotti con una griglia visiva e sincronizzazione in tempo reale.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

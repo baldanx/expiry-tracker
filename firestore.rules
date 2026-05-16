@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Permetti a chiunque sia autenticato (anche anonimamente)
+    // di leggere e scrivere su queste collezioni condivise.
+    match /shared_products/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    
+    match /shared_batches/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Regola di fallback (opzionale, blocca tutto il resto)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
