@@ -29,13 +29,15 @@ import {
   ChevronDown,
   Layers,
   LayoutGrid,
-  AlertCircle
+  AlertCircle,
+  ListOrdered
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder, useDragControls } from 'motion/react';
 import { db, auth } from './lib/firebase';
 import { Product, Batch } from './types';
 
 interface ReorderItemProps {
+  isReorderMode: boolean;
   p: Product;
   maxDaysPossible: number;
   slots: Record<number, number>;
@@ -67,7 +69,8 @@ const ReorderItemComponent: React.FC<ReorderItemProps> = ({
   setActiveSlot,
   setIsSlotModalOpen,
   setIsDragging,
-  saveOrder
+  saveOrder,
+  isReorderMode
 }) => {
   const dragControls = useDragControls();
 
@@ -85,14 +88,16 @@ const ReorderItemComponent: React.FC<ReorderItemProps> = ({
     >
       <div className={`sticky left-0 z-30 grid-cell relative px-2 group shadow-sm transition-colors ${focusedProductId === p.id ? 'bg-indigo-50' : 'bg-white'}`}>
         <div className="flex items-center w-full gap-2">
-          <GripVertical 
-            size={20} 
-            className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-indigo-600 transition-colors shrink-0 touch-none"
-            onPointerDown={(e) => {
-              e.preventDefault();
-              dragControls.start(e);
-            }}
-          />
+          {isReorderMode && (
+            <GripVertical 
+              size={20} 
+              className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-indigo-600 transition-colors shrink-0 touch-none"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                dragControls.start(e);
+              }}
+            />
+          )}
           <span className={`font-bold text-slate-700 text-[14px] flex-1 text-center truncate leading-tight ${focusedProductId === p.id ? 'text-indigo-600' : ''}`}>
             {p.name}
           </span>
@@ -159,6 +164,7 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [currentCategory, setCurrentCategory] = useState<'mignon' | 'monoporzione'>('mignon');
   const [showArchived, setShowArchived] = useState(false);
+  const [isReorderMode, setIsReorderMode] = useState(false);
 
   const [focusedProductId, setFocusedProductId] = useState<string | null>(null);
 
@@ -658,7 +664,16 @@ export default function App() {
                 className="grid sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80"
                 style={{ gridTemplateColumns: `var(--col-prod) repeat(${maxDaysPossible}, var(--col-day))` }}
               >
-                <div className="sticky-corner font-bold text-slate-400 text-[10px] tracking-widest uppercase border-r bg-white/95 h-12 flex items-center justify-center">PRODOTTO</div>
+                <div className="sticky-corner font-bold text-slate-400 text-[10px] tracking-widest uppercase border-r bg-white/95 h-12 flex items-center px-1">
+                  <div className="flex-1 text-center pl-4">PRODOTTO</div>
+                  <button 
+                    onClick={() => setIsReorderMode(!isReorderMode)}
+                    className={`p-1.5 rounded transition-colors ${isReorderMode ? 'bg-indigo-100 text-indigo-600' : 'text-slate-300 hover:text-indigo-500'}`}
+                    title={isReorderMode ? "Disattiva riordino" : "Attiva riordino"}
+                  >
+                    <ListOrdered size={16} />
+                  </button>
+                </div>
                 {Array.from({ length: maxDaysPossible }).map((_, i) => {
                   const date = new Date();
                   date.setDate(date.getDate() - i);
@@ -710,6 +725,7 @@ export default function App() {
                       setIsSlotModalOpen={setIsSlotModalOpen}
                       setIsDragging={(d) => { isDragging.current = d; }}
                       saveOrder={saveOrder}
+                      isReorderMode={isReorderMode}
                     />
                   );
                 })}
