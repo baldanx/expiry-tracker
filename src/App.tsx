@@ -310,6 +310,12 @@ export default function App() {
       category: currentCategory, // Assign current category to new products
     };
 
+    localStorage.setItem('lastProductDaysConfig', JSON.stringify({
+      maxDays: data.maxDays,
+      yellowDays: data.yellowDays,
+      redDays: data.redDays
+    }));
+
     setIsProductModalOpen(false);
     setEditingProduct(null);
 
@@ -779,18 +785,29 @@ export default function App() {
                 />
               </div>
               <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-700 mb-2 uppercase">Giorni Max</label>
-                  <input name="maxDays" type="number" defaultValue={editingProduct?.maxDays || 30} required min="1" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-amber-600 mb-2 uppercase">Giallo</label>
-                  <input name="yellowDays" type="number" defaultValue={editingProduct?.yellowDays || 5} required min="0" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-red-600 mb-2 uppercase">Rosso</label>
-                  <input name="redDays" type="number" defaultValue={editingProduct?.redDays || 3} required min="0" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
-                </div>
+                {(() => {
+                  let defaultDays = { maxDays: 30, yellowDays: 5, redDays: 2 };
+                  try {
+                    const saved = localStorage.getItem('lastProductDaysConfig');
+                    if (saved) defaultDays = JSON.parse(saved);
+                  } catch (e) {}
+                  return (
+                    <>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-700 mb-2 uppercase">Giorni Max</label>
+                        <input name="maxDays" type="number" defaultValue={editingProduct?.maxDays || defaultDays.maxDays} required min="1" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-amber-600 mb-2 uppercase">Giallo</label>
+                        <input name="yellowDays" type="number" defaultValue={editingProduct?.yellowDays || defaultDays.yellowDays} required min="0" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-red-600 mb-2 uppercase">Rosso</label>
+                        <input name="redDays" type="number" defaultValue={editingProduct?.redDays || defaultDays.redDays} required min="0" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
               <div className="flex gap-3 pt-4">
                 <button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg">Annulla</button>
