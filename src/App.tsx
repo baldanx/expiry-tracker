@@ -310,6 +310,9 @@ export default function App() {
       category: currentCategory, // Assign current category to new products
     };
 
+    setIsProductModalOpen(false);
+    setEditingProduct(null);
+
     try {
       if (editingProduct) {
         await updateDoc(doc(db, 'shared_products', editingProduct.id), {
@@ -326,15 +329,15 @@ export default function App() {
           createdAt: serverTimestamp()
         });
       }
-      setIsProductModalOpen(false);
-      setEditingProduct(null);
     } catch (err) {
       console.error("Save product error:", err);
-      alert("Errore durante il salvataggio");
+      // We don't alert here smoothly, just log
     }
   };
 
   const handleDeleteProduct = async (id: string, onlyEmpty = false) => {
+    setIsDeleteChoiceOpen(false);
+    setProductToDelete(null);
     try {
       const batch = writeBatch(db);
       if (!onlyEmpty) {
@@ -345,8 +348,6 @@ export default function App() {
       batchesSnapshot.docs.forEach(d => batch.delete(d.ref));
       
       await batch.commit();
-      setIsDeleteChoiceOpen(false);
-      setProductToDelete(null);
     } catch (err) {
       console.error("Delete error:", err);
       alert("Errore durante l'eliminazione");
@@ -355,6 +356,7 @@ export default function App() {
 
   const handleAddBatch = async (quantity: number) => {
     if (!activeProductId) return;
+    setIsBatchModalOpen(false);
     try {
       await addDoc(collection(db, 'shared_batches'), {
         productId: activeProductId,
@@ -362,7 +364,6 @@ export default function App() {
         entryDate: new Date().toISOString(),
         createdAt: serverTimestamp()
       });
-      setIsBatchModalOpen(false);
     } catch (err) {
       console.error("Add batch error:", err);
     }
@@ -372,8 +373,8 @@ export default function App() {
     if (!activeSlot) return;
     const { productId, daysPassed, quantity: currentTotal } = activeSlot;
     const diff = newQty - currentTotal;
+    setIsSlotModalOpen(false);
     if (diff === 0) {
-      setIsSlotModalOpen(false);
       return;
     }
 
@@ -407,7 +408,6 @@ export default function App() {
         }
       }
       await batch.commit();
-      setIsSlotModalOpen(false);
     } catch (err) {
       console.error("Update slot error:", err);
     }
