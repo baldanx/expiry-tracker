@@ -289,14 +289,17 @@ export default function App() {
 
   const colTotals = useMemo(() => {
     const totals = new Array(maxDaysPossible).fill(0);
+    const validProductIds = new Set(filteredProducts.map(p => p.id));
+    
     batches.forEach(b => {
+      if (!validProductIds.has(b.productId)) return;
       const dp = getDaysPassed(b.entryDate);
       if (dp >= 0 && dp < maxDaysPossible) {
         totals[dp] += b.quantity;
       }
     });
     return totals;
-  }, [batches, maxDaysPossible]);
+  }, [batches, filteredProducts, maxDaysPossible]);
 
   // Actions
   const handleSaveProduct = async (e: React.FormEvent<HTMLFormElement>) => {
