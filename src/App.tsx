@@ -425,8 +425,9 @@ export default function App() {
   const deleteColumn = async (dayIndex: number) => {
     if (!confirm(`Eliminare tutti i colli del giorno ${dayIndex}?`)) return;
     try {
+      const validProductIds = new Set(filteredProducts.map(p => p.id));
       const batch = writeBatch(db);
-      batches.filter(b => getDaysPassed(b.entryDate) === dayIndex).forEach(b => {
+      batches.filter(b => validProductIds.has(b.productId) && getDaysPassed(b.entryDate) === dayIndex).forEach(b => {
         batch.delete(doc(db, 'shared_batches', b.id));
       });
       await batch.commit();
