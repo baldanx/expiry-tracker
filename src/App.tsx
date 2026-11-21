@@ -4,10 +4,8 @@ import {
   onSnapshot, 
   addDoc, 
   updateDoc, 
-  deleteDoc, 
   doc, 
   query, 
-  orderBy, 
   serverTimestamp, 
   writeBatch,
   where,
@@ -22,11 +20,8 @@ import {
   Edit2, 
   Trash2, 
   Archive,
-  RefreshCw,
   ArchiveRestore,
   GripVertical,
-  ChevronUp,
-  ChevronDown,
   Layers,
   LayoutGrid,
   AlertCircle,
@@ -119,15 +114,24 @@ const ReorderItemComponent: React.FC<ReorderItemProps> = ({
 
       {Array.from({ length: maxDaysPossible }).map((_, day) => {
         const qty = slots[day] || 0;
+        const isBeyondMax = day >= p.maxDays;
         const redStart = p.maxDays - p.redDays;
         const yellowStart = redStart - p.yellowDays;
-        const isRed = day >= redStart;
-        const isYellow = !isRed && day >= yellowStart;
+        const isRed = !isBeyondMax && day >= redStart;
+        const isYellow = !isBeyondMax && !isRed && day >= yellowStart;
 
         return (
           <div 
             key={day} 
-            className={`grid-cell relative group ${isRed ? 'bg-expired' : isYellow ? 'bg-warning' : ''}`}
+            className={`grid-cell relative group ${
+              isBeyondMax 
+                ? 'bg-slate-100/70' 
+                : isRed 
+                  ? 'bg-expired' 
+                  : isYellow 
+                    ? 'bg-warning' 
+                    : ''
+            }`}
             onClick={(e) => {
               e.stopPropagation();
               setActiveSlot({ productId: p.id, daysPassed: day, quantity: qty }); 
@@ -137,11 +141,13 @@ const ReorderItemComponent: React.FC<ReorderItemProps> = ({
             {qty > 0 ? (
               <div 
                 className={`status-dot cursor-pointer ${
-                  isRed 
-                    ? 'bg-red-500 shadow-red-200' 
-                    : isYellow 
-                      ? 'bg-amber-400 shadow-amber-200' 
-                      : 'bg-emerald-500 shadow-emerald-200'
+                  isBeyondMax
+                    ? 'bg-rose-800 shadow-rose-300 ring-2 ring-rose-300'
+                    : isRed 
+                      ? 'bg-red-500 shadow-red-200' 
+                      : isYellow 
+                        ? 'bg-amber-400 shadow-amber-200' 
+                        : 'bg-emerald-500 shadow-emerald-200'
                 }`}
               >
                 {qty}
@@ -185,25 +191,29 @@ export default function App() {
   }, [products, currentCategory, showArchived]);
 
   const [displayProducts, setDisplayProducts] = useState<Product[]>([]);
+  const displayProductsRef = useRef<Product[]>([]);
   const isDragging = useRef(false);
 
   useEffect(() => {
     if (!isDragging.current) {
       setDisplayProducts(filteredProducts);
+      displayProductsRef.current = filteredProducts;
     }
   }, [filteredProducts]);
 
   // Handle Drag Reorder
   const handleReorder = (newOrder: Product[]) => {
     // Immediate visual update for Framer Motion, without triggering a full recalculation of filteredProducts
+    displayProductsRef.current = newOrder;
     setDisplayProducts(newOrder);
   };
 
   const saveOrder = async () => {
     try {
+      const currentOrder = displayProductsRef.current;
       const batch = writeBatch(db);
       let hasChanges = false;
-      displayProducts.forEach((p, index) => {
+      currentOrder.forEach((p, index) => {
         const newOrderValue = index + 1;
         if (p.sortOrder !== newOrderValue) {
           batch.update(doc(db, 'shared_products', p.id), { sortOrder: newOrderValue });
@@ -218,15 +228,32 @@ export default function App() {
     }
   };
 
-  // Modals state
+  // Modals & Feedback state
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
-  const [activeProductId, setActiveProductId] = useState<string | null>(null);
+  const [productFormError, setProductFormError] = useState<string | null>(null);
   const [isSlotModalOpen, setIsSlotModalOpen] = useState(false);
   const [activeSlot, setActiveSlot] = useState<{ productId: string, daysPassed: number, quantity: number } | null>(null);
   const [isDeleteChoiceOpen, setIsDeleteChoiceOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    variant?: 'danger' | 'primary';
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+  };
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   // Auth & Sync
   useEffect(() => {
@@ -235,8 +262,9 @@ export default function App() {
         setUser(u);
       } else {
         signInAnonymously(auth).catch(err => {
-          console.warn("Auth error (non-fatal):", err);
-          // Don't show blocking error for auth, just let it fail gracefully
+          console.error("Auth error:", err);
+          setError("Impossibile autenticarsi. Controlla la connessione e riprova.");
+          setLoading(false);
         });
       }
     });
@@ -252,12 +280,12 @@ export default function App() {
 
     const unsubProducts = onSnapshot(qProducts, (snapshot) => {
       setProducts(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Product)));
+      setError(null);
       setLoading(false);
     }, (err) => {
       console.error("Products sync error:", err);
-      // Only set error if it's truly a breaking state
       if (err.message.includes('permission-denied')) {
-        console.warn("Permission denied - check rules or auth");
+        setError("Permessi insufficienti per accedere al database.");
       }
       setLoading(false);
     });
@@ -284,7 +312,7 @@ export default function App() {
     const now = new Date();
     start.setHours(0, 0, 0, 0);
     now.setHours(0, 0, 0, 0);
-    return Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+    return Math.round((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
   };
 
   const colTotals = useMemo(() => {
@@ -305,26 +333,51 @@ export default function App() {
   const handleSaveProduct = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+    const name = (formData.get('name') as string || '').trim();
+    const maxDays = parseInt(formData.get('maxDays') as string, 10);
+    const yellowDays = parseInt(formData.get('yellowDays') as string, 10);
+    const redDays = parseInt(formData.get('redDays') as string, 10);
+
+    if (!name) {
+      setProductFormError('Inserisci un nome valido per il prodotto.');
+      return;
+    }
+    if (Number.isNaN(maxDays) || Number.isNaN(yellowDays) || Number.isNaN(redDays) || maxDays < 1 || yellowDays < 0 || redDays < 0) {
+      setProductFormError('Inserisci valori numerici validi per i giorni.');
+      return;
+    }
+    if (yellowDays + redDays > maxDays) {
+      setProductFormError(`La somma di Giallo (${yellowDays}) + Rosso (${redDays}) non può superare Giorni Max (${maxDays}).`);
+      return;
+    }
+
+    setProductFormError(null);
+
     const data = {
-      name: formData.get('name') as string,
-      maxDays: parseInt(formData.get('maxDays') as string),
-      yellowDays: parseInt(formData.get('yellowDays') as string),
-      redDays: parseInt(formData.get('redDays') as string),
-      category: currentCategory, // Assign current category to new products
+      name,
+      maxDays,
+      yellowDays,
+      redDays,
+      category: editingProduct ? (editingProduct.category || currentCategory) : currentCategory,
     };
 
-    localStorage.setItem('lastProductDaysConfig', JSON.stringify({
-      maxDays: data.maxDays,
-      yellowDays: data.yellowDays,
-      redDays: data.redDays
-    }));
+    try {
+      localStorage.setItem('lastProductDaysConfig', JSON.stringify({
+        maxDays: data.maxDays,
+        yellowDays: data.yellowDays,
+        redDays: data.redDays
+      }));
+    } catch {
+      // Ignore storage quota errors
+    }
 
+    const productToEdit = editingProduct;
     setIsProductModalOpen(false);
     setEditingProduct(null);
 
     try {
-      if (editingProduct) {
-        await updateDoc(doc(db, 'shared_products', editingProduct.id), {
+      if (productToEdit) {
+        await updateDoc(doc(db, 'shared_products', productToEdit.id), {
           ...data,
           updatedAt: serverTimestamp()
         });
@@ -340,7 +393,7 @@ export default function App() {
       }
     } catch (err) {
       console.error("Save product error:", err);
-      // We don't alert here smoothly, just log
+      showToast('Errore durante il salvataggio del prodotto.', 'error');
     }
   };
 
@@ -348,33 +401,20 @@ export default function App() {
     setIsDeleteChoiceOpen(false);
     setProductToDelete(null);
     try {
-      const batch = writeBatch(db);
-      if (!onlyEmpty) {
-        batch.delete(doc(db, 'shared_products', id));
-      }
-      
       const batchesSnapshot = await getDocs(query(collection(db, 'shared_batches'), where('productId', '==', id)));
-      batchesSnapshot.docs.forEach(d => batch.delete(d.ref));
-      
-      await batch.commit();
+      const refsToDelete = [
+        ...(!onlyEmpty ? [doc(db, 'shared_products', id)] : []),
+        ...batchesSnapshot.docs.map(d => d.ref)
+      ];
+      const CHUNK_SIZE = 450;
+      for (let i = 0; i < refsToDelete.length; i += CHUNK_SIZE) {
+        const batch = writeBatch(db);
+        refsToDelete.slice(i, i + CHUNK_SIZE).forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
     } catch (err) {
       console.error("Delete error:", err);
-      alert("Errore durante l'eliminazione");
-    }
-  };
-
-  const handleAddBatch = async (quantity: number) => {
-    if (!activeProductId) return;
-    setIsBatchModalOpen(false);
-    try {
-      await addDoc(collection(db, 'shared_batches'), {
-        productId: activeProductId,
-        quantity: quantity,
-        entryDate: new Date().toISOString(),
-        createdAt: serverTimestamp()
-      });
-    } catch (err) {
-      console.error("Add batch error:", err);
+      showToast("Errore durante l'eliminazione", 'error');
     }
   };
 
@@ -391,7 +431,7 @@ export default function App() {
       const batch = writeBatch(db);
       const targetDate = new Date();
       targetDate.setDate(targetDate.getDate() - daysPassed);
-      targetDate.setHours(0, 0, 0, 0);
+      targetDate.setHours(12, 0, 0, 0);
       const targetDateStr = targetDate.toISOString();
 
       if (diff > 0) {
@@ -419,21 +459,37 @@ export default function App() {
       await batch.commit();
     } catch (err) {
       console.error("Update slot error:", err);
+      showToast("Errore durante l'aggiornamento dello slot.", 'error');
     }
   };
 
-  const deleteColumn = async (dayIndex: number) => {
-    if (!confirm(`Eliminare tutti i colli del giorno ${dayIndex}?`)) return;
-    try {
-      const validProductIds = new Set(filteredProducts.map(p => p.id));
-      const batch = writeBatch(db);
-      batches.filter(b => validProductIds.has(b.productId) && getDaysPassed(b.entryDate) === dayIndex).forEach(b => {
-        batch.delete(doc(db, 'shared_batches', b.id));
-      });
-      await batch.commit();
-    } catch (err) {
-      console.error("Delete column error:", err);
-    }
+  const deleteColumn = (dayIndex: number) => {
+    const validProductIds = new Set(filteredProducts.map(p => p.id));
+    const targetBatches = batches.filter(b => validProductIds.has(b.productId) && getDaysPassed(b.entryDate) === dayIndex);
+    if (targetBatches.length === 0) return;
+
+    const categoryLabel = currentCategory === 'mignon' ? 'Mignon' : 'Monoporzione';
+    setConfirmDialog({
+      title: `Elimina Giorno ${dayIndex}d`,
+      message: `Eliminare tutti i colli (${categoryLabel}) del giorno ${dayIndex}?`,
+      confirmLabel: 'Elimina',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          const CHUNK_SIZE = 450;
+          for (let i = 0; i < targetBatches.length; i += CHUNK_SIZE) {
+            const batch = writeBatch(db);
+            targetBatches.slice(i, i + CHUNK_SIZE).forEach(b => {
+              batch.delete(doc(db, 'shared_batches', b.id));
+            });
+            await batch.commit();
+          }
+        } catch (err) {
+          console.error("Delete column error:", err);
+          showToast("Errore durante l'eliminazione della colonna.", 'error');
+        }
+      }
+    });
   };
 
   const toggleArchive = async (product: Product) => {
@@ -447,32 +503,10 @@ export default function App() {
     }
   };
 
-  const moveProduct = async (product: Product, direction: 'up' | 'down') => {
-    const visibleProducts = filteredProducts;
-    const index = visibleProducts.findIndex(p => p.id === product.id);
-    if (direction === 'up' && index === 0) return;
-    if (direction === 'down' && index === visibleProducts.length - 1) return;
-
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    const targetProduct = visibleProducts[targetIndex];
-
-    const currentOrder = product.sortOrder || 0;
-    const targetOrder = targetProduct.sortOrder || 0;
-
-    try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'shared_products', product.id), { sortOrder: targetOrder });
-      batch.update(doc(db, 'shared_products', targetProduct.id), { sortOrder: currentOrder });
-      await batch.commit();
-    } catch (err) {
-      console.error("Move product error:", err);
-    }
-  };
-
   const handleExport = () => {
     const data = {
-      products: products.map(({ id, ...p }) => p),
-      batches: batches.map(({ id, ...b }) => b),
+      products: products.map(({ createdAt, ...p }) => p),
+      batches: batches.map(({ id, createdAt, ...b }) => b),
       exportedAt: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -485,30 +519,86 @@ export default function App() {
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = async (event) => {
+    reader.onload = (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
-        if (data.products && data.batches) {
-          if (confirm(`Importare ${data.products.length} voci e ${data.batches.length} colli?`)) {
-            const batch = writeBatch(db);
-            const prods = await getDocs(collection(db, 'shared_products'));
-            prods.docs.forEach(d => batch.delete(d.ref));
-            const bats = await getDocs(collection(db, 'shared_batches'));
-            bats.docs.forEach(d => batch.delete(d.ref));
-            await batch.commit();
-
-            const importBatch = writeBatch(db);
-            data.products.forEach((p: any) => batch.set(doc(collection(db, 'shared_products')), { ...p, createdAt: serverTimestamp() }));
-            data.batches.forEach((b: any) => batch.set(doc(collection(db, 'shared_batches')), { ...b, createdAt: serverTimestamp() }));
-            await importBatch.commit();
-            alert('Importazione completata');
-          }
+        if (!Array.isArray(data.products) || !Array.isArray(data.batches)) {
+          showToast('Formato file di backup non valido.', 'error');
+          return;
         }
+
+        setConfirmDialog({
+          title: 'Importa Backup',
+          message: `Sostituire i dati attuali con ${data.products.length} voci e ${data.batches.length} colli?`,
+          confirmLabel: 'Importa',
+          variant: 'primary',
+          onConfirm: async () => {
+            try {
+              const CHUNK_SIZE = 450;
+
+              // 1. Delete existing products and batches in safe chunks
+              const [prods, bats] = await Promise.all([
+                getDocs(collection(db, 'shared_products')),
+                getDocs(collection(db, 'shared_batches'))
+              ]);
+              const refsToDelete = [...prods.docs.map(d => d.ref), ...bats.docs.map(d => d.ref)];
+              for (let i = 0; i < refsToDelete.length; i += CHUNK_SIZE) {
+                const delBatch = writeBatch(db);
+                refsToDelete.slice(i, i + CHUNK_SIZE).forEach(ref => delBatch.delete(ref));
+                await delBatch.commit();
+              }
+
+              // 2. Prepare new product docs & remap old productId -> new Firestore doc id
+              const idMap = new Map<string, string>();
+              const operations: Array<{ ref: ReturnType<typeof doc>; payload: Record<string, any> }> = [];
+
+              data.products.forEach((rawProd: any) => {
+                const { id: oldId, createdAt, updatedAt, ...prodFields } = rawProd;
+                const newRef = doc(collection(db, 'shared_products'));
+                if (oldId) {
+                  idMap.set(oldId, newRef.id);
+                }
+                operations.push({
+                  ref: newRef,
+                  payload: { ...prodFields, createdAt: serverTimestamp() }
+                });
+              });
+
+              data.batches.forEach((rawBatch: any) => {
+                const { id: _oldBatchId, createdAt, updatedAt, ...batchFields } = rawBatch;
+                const mappedProductId = idMap.get(batchFields.productId) ?? batchFields.productId;
+                const newRef = doc(collection(db, 'shared_batches'));
+                operations.push({
+                  ref: newRef,
+                  payload: { ...batchFields, productId: mappedProductId, createdAt: serverTimestamp() }
+                });
+              });
+
+              // 3. Commit imported documents in safe chunks
+              for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
+                const importBatch = writeBatch(db);
+                operations.slice(i, i + CHUNK_SIZE).forEach(op => {
+                  importBatch.set(op.ref, op.payload);
+                });
+                await importBatch.commit();
+              }
+
+              showToast('Importazione completata con successo.', 'success');
+            } catch (err) {
+              console.error("Import commit error:", err);
+              showToast("Errore durante l'importazione dei dati.", 'error');
+            }
+          }
+        });
       } catch (err) {
-        alert('Errore lettura file');
+        console.error("Import parse error:", err);
+        showToast('Errore lettura file JSON.', 'error');
+      } finally {
+        input.value = '';
       }
     };
     reader.readAsText(file);
@@ -563,7 +653,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen max-h-screen flex flex-col overflow-hidden bg-slate-100">
+    <div className="h-[100dvh] max-h-[100dvh] flex flex-col overflow-hidden bg-slate-100">
       {/* Glass Header */}
       <header className="glass-header z-40 relative shadow-sm shrink-0">
         <div className="max-w-[1920px] mx-auto px-4 py-2 sm:py-3 flex flex-col xs:flex-row justify-between items-center gap-2">
@@ -776,9 +866,14 @@ export default function App() {
       {/* Modals Implementation */}
       <AnimatePresence>
         {isProductModalOpen && (
-          <Modal onClose={() => setIsProductModalOpen(false)}>
+          <Modal onClose={() => { setIsProductModalOpen(false); setProductFormError(null); }}>
             <h2 className="text-2xl font-bold text-slate-800 mb-6">{editingProduct ? 'Modifica Voce' : 'Nuova Voce'}</h2>
             <form onSubmit={handleSaveProduct} className="space-y-4">
+              {productFormError && (
+                <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs font-medium">
+                  {productFormError}
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">Nome Prodotto</label>
                 <input 
@@ -793,39 +888,40 @@ export default function App() {
                   let defaultDays = { maxDays: 30, yellowDays: 5, redDays: 2 };
                   try {
                     const saved = localStorage.getItem('lastProductDaysConfig');
-                    if (saved) defaultDays = JSON.parse(saved);
-                  } catch (e) {}
+                    if (saved) {
+                      const parsed = JSON.parse(saved);
+                      defaultDays = {
+                        maxDays: typeof parsed.maxDays === 'number' ? parsed.maxDays : 30,
+                        yellowDays: typeof parsed.yellowDays === 'number' ? parsed.yellowDays : 5,
+                        redDays: typeof parsed.redDays === 'number' ? parsed.redDays : 2,
+                      };
+                    }
+                  } catch {
+                    // Ignore invalid JSON in localStorage
+                  }
                   return (
                     <>
                       <div>
                         <label className="block text-[10px] font-semibold text-slate-700 mb-2 uppercase">Giorni Max</label>
-                        <input name="maxDays" type="number" defaultValue={editingProduct?.maxDays || defaultDays.maxDays} required min="1" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
+                        <input name="maxDays" type="number" defaultValue={editingProduct?.maxDays ?? defaultDays.maxDays} required min="1" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
                       </div>
                       <div>
                         <label className="block text-[10px] font-semibold text-amber-600 mb-2 uppercase">Giallo</label>
-                        <input name="yellowDays" type="number" defaultValue={editingProduct?.yellowDays || defaultDays.yellowDays} required min="0" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
+                        <input name="yellowDays" type="number" defaultValue={editingProduct?.yellowDays ?? defaultDays.yellowDays} required min="0" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
                       </div>
                       <div>
                         <label className="block text-[10px] font-semibold text-red-600 mb-2 uppercase">Rosso</label>
-                        <input name="redDays" type="number" defaultValue={editingProduct?.redDays || defaultDays.redDays} required min="0" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
+                        <input name="redDays" type="number" defaultValue={editingProduct?.redDays ?? defaultDays.redDays} required min="0" className="w-full px-3 py-2.5 bg-white/70 border border-white rounded-lg text-center" />
                       </div>
                     </>
                   );
                 })()}
               </div>
               <div className="flex gap-3 pt-4">
-                <button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg">Annulla</button>
+                <button type="button" onClick={() => { setIsProductModalOpen(false); setProductFormError(null); }} className="flex-1 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg">Annulla</button>
                 <button type="submit" className="flex-1 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-semibold rounded-lg shadow-md">Salva</button>
               </div>
             </form>
-          </Modal>
-        )}
-
-        {isBatchModalOpen && (
-          <Modal onClose={() => setIsBatchModalOpen(false)}>
-            <h2 className="text-2xl font-bold text-slate-800 mb-2">Aggiungi Collo</h2>
-            <p className="text-sm text-slate-500 mb-6">per <strong className="text-indigo-600">{products.find(p => p.id === activeProductId)?.name}</strong></p>
-            <QuantityInput onSave={handleAddBatch} onCancel={() => setIsBatchModalOpen(false)} initial={1} />
           </Modal>
         )}
 
@@ -838,12 +934,12 @@ export default function App() {
                 const { daysPassed } = activeSlot;
                 const daysToExpiry = p ? (p.maxDays - daysPassed) : 0;
                 
-                let infoText = `Giorno ${daysPassed} `;
+                let infoText = `Giorno ${daysPassed}`;
                 if (daysPassed === 0) infoText += " (Oggi)";
                 else if (daysPassed === 1) infoText += " (Ieri)";
 
-                if (p && daysPassed > p.maxDays) {
-                  return "Scaduto";
+                if (p && daysPassed >= p.maxDays) {
+                  return `${infoText} - Scaduto (max ${p.maxDays}gg)`;
                 } else {
                   return `${infoText} - ${daysToExpiry}gg alla scadenza`;
                 }
@@ -874,6 +970,48 @@ export default function App() {
             </div>
           </Modal>
         )}
+
+        {confirmDialog && (
+          <Modal onClose={() => setConfirmDialog(null)}>
+            <h2 className="text-xl font-bold text-slate-800 mb-2 text-center">{confirmDialog.title}</h2>
+            <p className="text-sm text-slate-600 mb-6 text-center">{confirmDialog.message}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="flex-1 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition-colors"
+              >
+                Annulla
+              </button>
+              <button
+                onClick={async () => {
+                  const action = confirmDialog.onConfirm;
+                  setConfirmDialog(null);
+                  await action();
+                }}
+                className={`flex-1 px-4 py-2.5 font-semibold rounded-lg text-white shadow-md transition-colors ${
+                  confirmDialog.variant === 'danger'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-gradient-to-r from-indigo-600 to-violet-600'
+                }`}
+              >
+                {confirmDialog.confirmLabel}
+              </button>
+            </div>
+          </Modal>
+        )}
+
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl shadow-lg text-sm font-semibold text-white ${
+              toast.type === 'error' ? 'bg-red-600' : 'bg-slate-800'
+            }`}
+          >
+            {toast.message}
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
@@ -897,6 +1035,9 @@ function Modal({ children, onClose }: { children: React.ReactNode, onClose: () =
 
 function QuantityInput({ onSave, onCancel, initial = 1 }: { onSave: (q: number) => void, onCancel: () => void, initial?: number }) {
   const [qty, setQty] = useState(initial);
+  useEffect(() => {
+    setQty(initial);
+  }, [initial]);
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-center gap-4">
